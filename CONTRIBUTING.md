@@ -504,7 +504,7 @@ When contributing:
 
 - **GitHub Issues**: For bugs and feature requests
 - **GitHub Discussions**: For questions and ideas
-- **Email**: [maintainer email] for private inquiries
+- **Contact**: Please use GitHub for project-related inquiries
 
 ---
 

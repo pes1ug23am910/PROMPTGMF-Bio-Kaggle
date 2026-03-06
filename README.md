@@ -487,7 +487,7 @@ MIT License
 
 ## Contact
 
-For questions or issues, please open an issue on GitHub or contact [your email].
+For questions or issues, please open an issue on GitHub or reach out through the repository.
 
 ## Acknowledgments
 

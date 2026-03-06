@@ -228,6 +228,34 @@ site/
 *.tar.gz
 *.tar
 *.gz
+
+# =====================================
+# Development & Internal Tracking Files
+# =====================================
+# Project status and progress tracking files
+*STATUS*.md
+*COMPLETE*.md
+*PROGRESS*.md
+*ROADMAP*.md
+*VALIDATION*.md
+
+# Helper scripts and setup guides
+verify_before_push.ps1
+PUSH_TO_GITHUB.md
+READY_TO_PUSH.md
+GITHUB_PREPARATION_COMPLETE.md
+
+# Internal planning documents
+data_expansion_action_plan.md
+CONFERENCE_PAPER_ROADMAP.md
+
+# Duplicate implementation files (actual code in src/)
+hpo_bridge_implementation.py
+orphadata_integration.py
+
+# Copilot/AI assistant prompts
+promptgfm_bio_copilot_prompt.md
+*copilot*.md
 *.bz2
 *.7z
 *.rar
