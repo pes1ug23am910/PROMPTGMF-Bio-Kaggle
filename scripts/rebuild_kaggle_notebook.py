@@ -1,49 +1,52 @@
-{
- "nbformat": 4,
- "nbformat_minor": 5,
- "metadata": {
-  "kernelspec": {
-   "display_name": "Python 3",
-   "language": "python",
-   "name": "python3"
-  },
-  "language_info": {
-   "name": "python",
-   "version": "3.10.0"
-  },
-  "kaggle": {
-   "accelerator": "gpu",
-   "dataSources": [],
-   "dockerImageVersionId": 30761,
-   "isInternetEnabled": true,
-   "language": "python",
-   "sourceType": "notebook"
-  }
- },
- "cells": [
-  {
-   "cell_type": "markdown",
-   "id": "cell00abcd",
-   "metadata": {},
-   "source": [
-    "# PromptGFM-Bio — Kaggle Training Notebook\n**Gene-Phenotype Prediction for Rare Diseases**\n\n### ✅ Resumable Across Sessions & Accounts\nThis notebook saves **three Kaggle Datasets** after training so any future session — or a different Kaggle account — can skip all expensive steps:\n\n| Dataset name (you choose) | What it stores | Skips |\n|---|---|---|\n| `promptgfm-model-cache` | HuggingFace BioBERT weights | ~5 min download |\n| `promptgfm-data` | Raw + processed graph | ~25 min download + preprocess |\n| `promptgfm-checkpoints` | Per-epoch checkpoints | training from epoch 0 |\n\n**Setup once → add as Dataset inputs on every future session.**\n\n> ⚙️ Before running: Settings → Accelerator → **GPU T4 x2** · Internet → **On**"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell01abcd",
-   "metadata": {},
-   "source": [
-    "## 1. Environment Check"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell02abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+"""
+Rebuilds notebooks/kaggle_training.ipynb with full cross-session resume support.
+Run from project root:  python scripts/rebuild_kaggle_notebook.py
+"""
+import json, pathlib, sys
+
+OUT = pathlib.Path("notebooks/kaggle_training.ipynb")
+
+def md(src): return {"cell_type":"markdown","id":None,"metadata":{},"source":[src]}
+def code(lines): return {"cell_type":"code","id":None,"execution_count":None,"metadata":{},"outputs":[],"source":lines}
+
+# ── helper: assign sequential ids ────────────────────────────────────────────
+def build(cells):
+    for i, c in enumerate(cells):
+        c["id"] = f"cell{i:02d}abcd"
+    return {"nbformat":4,"nbformat_minor":5,
+            "metadata":{
+                "kernelspec":{"display_name":"Python 3","language":"python","name":"python3"},
+                "language_info":{"name":"python","version":"3.10.0"},
+                "kaggle":{"accelerator":"gpu","dataSources":[],"dockerImageVersionId":30761,
+                          "isInternetEnabled":True,"language":"python","sourceType":"notebook"}
+            },
+            "cells":cells}
+
+cells = []
+
+# ── 0 · Title ─────────────────────────────────────────────────────────────────
+cells.append(md("""\
+# PromptGFM-Bio — Kaggle Training Notebook
+**Gene-Phenotype Prediction for Rare Diseases**
+
+### ✅ Resumable Across Sessions & Accounts
+This notebook saves **three Kaggle Datasets** after training so any future session — \
+or a different Kaggle account — can skip all expensive steps:
+
+| Dataset name (you choose) | What it stores | Skips |
+|---|---|---|
+| `promptgfm-model-cache` | HuggingFace BioBERT weights | ~5 min download |
+| `promptgfm-data` | Raw + processed graph | ~25 min download + preprocess |
+| `promptgfm-checkpoints` | Per-epoch checkpoints | training from epoch 0 |
+
+**Setup once → add as Dataset inputs on every future session.**
+
+> ⚙️ Before running: Settings → Accelerator → **GPU T4 x2** · Internet → **On**\
+"""))
+
+# ── 1 · Env check ─────────────────────────────────────────────────────────────
+cells.append(md("## 1. Environment Check"))
+cells.append(code([
     "import sys, subprocess, os\n",
     "import torch\n",
     "\n",
@@ -55,24 +58,18 @@
     "    vram = torch.cuda.get_device_properties(0).total_memory / 1e9\n",
     "    print(f'VRAM    : {vram:.1f} GB  (expect ~15-16 GB on T4)')\n",
     "else:\n",
-    "    print('⚠️  No GPU — enable in Notebook Settings → Accelerator → GPU T4')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell03abcd",
-   "metadata": {},
-   "source": [
-    "## 2. ⚙️ Session Configuration\nEdit the variables below **before running any other cell**.\n\n**`RESUME_*` flags**: set to `True` if you have added the corresponding Kaggle Dataset as input.  \n**Dataset input paths**: change if you named your datasets differently."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell04abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "    print('⚠️  No GPU — enable in Notebook Settings → Accelerator → GPU T4')\n",
+]))
+
+# ── 2 · Session configuration ─────────────────────────────────────────────────
+cells.append(md("""\
+## 2. ⚙️ Session Configuration
+Edit the variables below **before running any other cell**.
+
+**`RESUME_*` flags**: set to `True` if you have added the corresponding Kaggle Dataset as input.  
+**Dataset input paths**: change if you named your datasets differently.\
+"""))
+cells.append(code([
     "# ─── RESUME FLAGS ────────────────────────────────────────────────────────\n",
     "# Set True when you have added the matching dataset as notebook input\n",
     "RESUME_HF_CACHE     = False  # True → skip BioBERT download (saves ~5 min)\n",
@@ -101,24 +98,12 @@
     "print(f'  RESUME_HF_CACHE    = {RESUME_HF_CACHE}')\n",
     "print(f'  RESUME_DATA        = {RESUME_DATA}')\n",
     "print(f'  RESUME_CHECKPOINTS = {RESUME_CHECKPOINTS}')\n",
-    "print(f'  HF cache dir       = {HF_CACHE_DIR}')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell05abcd",
-   "metadata": {},
-   "source": [
-    "## 3. Install PyTorch Geometric"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell06abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "print(f'  HF cache dir       = {HF_CACHE_DIR}')\n",
+]))
+
+# ── 3 · Install PyG ───────────────────────────────────────────────────────────
+cells.append(md("## 3. Install PyTorch Geometric"))
+cells.append(code([
     "import torch, subprocess, sys\n",
     "\n",
     "TORCH_VER = torch.__version__.split('+')[0]\n",
@@ -133,24 +118,12 @@
     "     'torch-spline-conv', 'torch-geometric'],\n",
     "    check=True\n",
     ")\n",
-    "print('✅ PyTorch Geometric installed')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell07abcd",
-   "metadata": {},
-   "source": [
-    "## 4. Install Extra Dependencies"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell08abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "print('✅ PyTorch Geometric installed')\n",
+]))
+
+# ── 4 · Install extras ────────────────────────────────────────────────────────
+cells.append(md("## 4. Install Extra Dependencies"))
+cells.append(code([
     "# Upgrade build tools first — prevents metadata-generation-failed on Python 3.12\n",
     "subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet',\n",
     "                '--upgrade', 'setuptools', 'wheel', 'pip'], check=True)\n",
@@ -164,24 +137,12 @@
     "    'python-dotenv>=1.0.0',\n",
     "]\n",
     "subprocess.run([sys.executable, '-m', 'pip', 'install', '--quiet'] + extra, check=True)\n",
-    "print('✅ Extra packages installed')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell09abcd",
-   "metadata": {},
-   "source": [
-    "## 5. Clone Project Code from GitHub"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell10abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "print('✅ Extra packages installed')\n",
+]))
+
+# ── 5 · Clone repo ────────────────────────────────────────────────────────────
+cells.append(md("## 5. Clone Project Code from GitHub"))
+cells.append(code([
     "import os\n",
     "from pathlib import Path\n",
     "\n",
@@ -197,24 +158,12 @@
     "\n",
     "os.chdir(PROJECT_DIR)\n",
     "sys.path.insert(0, PROJECT_DIR)\n",
-    "print(f'Working directory: {os.getcwd()}')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell11abcd",
-   "metadata": {},
-   "source": [
-    "## 6. Create Directory Structure"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell12abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "print(f'Working directory: {os.getcwd()}')\n",
+]))
+
+# ── 6 · Create dirs ───────────────────────────────────────────────────────────
+cells.append(md("## 6. Create Directory Structure"))
+cells.append(code([
     "from pathlib import Path\n",
     "\n",
     "dirs = [\n",
@@ -224,24 +173,18 @@
     "]\n",
     "for d in dirs:\n",
     "    Path(d).mkdir(parents=True, exist_ok=True)\n",
-    "print('✅ Directories created')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell13abcd",
-   "metadata": {},
-   "source": [
-    "## 7. Restore Assets from Previous Session\nRestores HuggingFace model cache, preprocessed data, and training checkpoints from saved Kaggle Datasets — skipping all expensive steps below.\n**First-time run**: all three blocks will print \"not found — will download/preprocess fresh\"."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell14abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "print('✅ Directories created')\n",
+]))
+
+# ── 7 · Restore assets ────────────────────────────────────────────────────────
+cells.append(md("""\
+## 7. Restore Assets from Previous Session
+Restores HuggingFace model cache, preprocessed data, and training checkpoints \
+from saved Kaggle Datasets — skipping all expensive steps below.\
+
+**First-time run**: all three blocks will print "not found — will download/preprocess fresh".\
+"""))
+cells.append(code([
     "import shutil, tarfile\n",
     "from pathlib import Path\n",
     "\n",
@@ -311,24 +254,16 @@
     "        print(f'⚠️  No checkpoints found at {INPUT_CHECKPOINTS} — will train from scratch')\n",
     "        RESUME_CHECKPOINTS = False\n",
     "else:\n",
-    "    print('Checkpoints: skipped (RESUME_CHECKPOINTS=False)')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell15abcd",
-   "metadata": {},
-   "source": [
-    "## 8. Download Biomedical Datasets\nSkipped automatically if `RESUME_DATA=True` and graph was restored successfully.  \nTotal download: ~1.5 GB · takes ~10 min."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell16abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "    print('Checkpoints: skipped (RESUME_CHECKPOINTS=False)')\n",
+]))
+
+# ── 8 · Download data ─────────────────────────────────────────────────────────
+cells.append(md("""\
+## 8. Download Biomedical Datasets
+Skipped automatically if `RESUME_DATA=True` and graph was restored successfully.  
+Total download: ~1.5 GB · takes ~10 min.\
+"""))
+cells.append(code([
     "from pathlib import Path\n",
     "\n",
     "graph_exists = Path('data/processed/biomedical_graph.pt').exists()\n",
@@ -341,24 +276,15 @@
     "        [sys.executable, 'scripts/download_data.py', '--dataset', 'all'],\n",
     "        capture_output=False\n",
     "    )\n",
-    "    print('Download exit code:', result.returncode)\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell17abcd",
-   "metadata": {},
-   "source": [
-    "## 9. Preprocess Data (Build Knowledge Graph)\nSkipped automatically if `RESUME_DATA=True` and graph was restored successfully."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell18abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "    print('Download exit code:', result.returncode)\n",
+]))
+
+# ── 9 · Preprocess ────────────────────────────────────────────────────────────
+cells.append(md("""\
+## 9. Preprocess Data (Build Knowledge Graph)
+Skipped automatically if `RESUME_DATA=True` and graph was restored successfully.\
+"""))
+cells.append(code([
     "from pathlib import Path\n",
     "\n",
     "graph_path = Path('data/processed/biomedical_graph.pt')\n",
@@ -375,24 +301,12 @@
     "    if graph_path.exists():\n",
     "        print(f'✅ Graph ready ({graph_path.stat().st_size/1e6:.0f} MB)')\n",
     "    else:\n",
-    "        raise RuntimeError('Graph file not created — check logs above')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell19abcd",
-   "metadata": {},
-   "source": [
-    "## 10. W&B Login (Optional)"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell20abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "        raise RuntimeError('Graph file not created — check logs above')\n",
+]))
+
+# ── 10 · W&B ──────────────────────────────────────────────────────────────────
+cells.append(md("## 10. W&B Login (Optional)"))
+cells.append(code([
     "WANDB_API_KEY = ''   # paste your key here, or leave empty to disable\n",
     "\n",
     "if WANDB_API_KEY:\n",
@@ -401,24 +315,16 @@
     "    print('✅ W&B logged in')\n",
     "else:\n",
     "    os.environ['WANDB_MODE'] = 'disabled'\n",
-    "    print('W&B disabled — metrics logged to stdout only')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell21abcd",
-   "metadata": {},
-   "source": [
-    "## 11. Train\nUses `configs/kaggle_config.yaml` (T4-tuned: batch_size=64, hidden_dim=512).  \nSet `RESUME=True` to continue from the last restored checkpoint."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell22abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "    print('W&B disabled — metrics logged to stdout only')\n",
+]))
+
+# ── 11 · Train ────────────────────────────────────────────────────────────────
+cells.append(md("""\
+## 11. Train
+Uses `configs/kaggle_config.yaml` (T4-tuned: batch_size=64, hidden_dim=512).  
+Set `RESUME=True` to continue from the last restored checkpoint.\
+"""))
+cells.append(code([
     "RESUME = RESUME_CHECKPOINTS   # auto-set from config above; override here if needed\n",
     "\n",
     "if RESUME:\n",
@@ -430,24 +336,34 @@
     "\n",
     "print('Running:', ' '.join(cmd))\n",
     "result = subprocess.run(cmd, capture_output=False)\n",
-    "print('Training exit code:', result.returncode)\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell23abcd",
-   "metadata": {},
-   "source": [
-    "## 12. 💾 Save ALL Assets as Kaggle Output\n\nRun this cell **before the session ends** (set a reminder before the 9-hour limit).\n\nIt saves three directories under `/kaggle/working/`:\n\n| Directory | Contents | Create Dataset named |\n|---|---|---|\n| `out_model_cache/` | BioBERT weights (~440 MB) | `promptgfm-model-cache` |\n| `out_data/` | Raw + processed graph (~600 MB) | `promptgfm-data` |\n| `out_checkpoints/` | Per-epoch `.pt` files | `promptgfm-checkpoints` |\n\n### After this cell completes:\n1. Click **Output** tab (right panel) → you'll see these three folders\n2. For **each** folder → click the ⊕ icon → **New Dataset** → use the names above\n3. Make the datasets **Public** (or **Private** if you want them only for yourself)\n4. Next session: **Add Data** → **Your Datasets** → add all three → set `RESUME_*=True`\n\n### Using from a different Kaggle account:\nMake the datasets **Public**, then the other account can find them by searching  \n`pes1ug23am910/promptgfm-model-cache` etc. in **Add Data**."
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell24abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "print('Training exit code:', result.returncode)\n",
+]))
+
+# ── 12 · Save everything ──────────────────────────────────────────────────────
+cells.append(md("""\
+## 12. 💾 Save ALL Assets as Kaggle Output
+
+Run this cell **before the session ends** (set a reminder before the 9-hour limit).
+
+It saves three directories under `/kaggle/working/`:
+
+| Directory | Contents | Create Dataset named |
+|---|---|---|
+| `out_model_cache/` | BioBERT weights (~440 MB) | `promptgfm-model-cache` |
+| `out_data/` | Raw + processed graph (~600 MB) | `promptgfm-data` |
+| `out_checkpoints/` | Per-epoch `.pt` files | `promptgfm-checkpoints` |
+
+### After this cell completes:
+1. Click **Output** tab (right panel) → you'll see these three folders
+2. For **each** folder → click the ⊕ icon → **New Dataset** → use the names above
+3. Make the datasets **Public** (or **Private** if you want them only for yourself)
+4. Next session: **Add Data** → **Your Datasets** → add all three → set `RESUME_*=True`
+
+### Using from a different Kaggle account:
+Make the datasets **Public**, then the other account can find them by searching  
+`pes1ug23am910/promptgfm-model-cache` etc. in **Add Data**.\
+"""))
+cells.append(code([
     "import shutil, tarfile, os\n",
     "from pathlib import Path\n",
     "\n",
@@ -505,24 +421,12 @@
     "print()\n",
     "print('Next steps:')\n",
     "print('  1. Output tab → create 3 datasets from out_model_cache, out_data, out_checkpoints')\n",
-    "print('  2. Next session: add those datasets as input, set RESUME_*=True in cell 2')\n"
-   ]
-  },
-  {
-   "cell_type": "markdown",
-   "id": "cell25abcd",
-   "metadata": {},
-   "source": [
-    "## 13. Quick Evaluation"
-   ]
-  },
-  {
-   "cell_type": "code",
-   "id": "cell26abcd",
-   "execution_count": null,
-   "metadata": {},
-   "outputs": [],
-   "source": [
+    "print('  2. Next session: add those datasets as input, set RESUME_*=True in cell 2')\n",
+]))
+
+# ── 13 · Evaluate ─────────────────────────────────────────────────────────────
+cells.append(md("## 13. Quick Evaluation"))
+cells.append(code([
     "from pathlib import Path\n",
     "\n",
     "best = Path('checkpoints/promptgfm_film/best_model.pt')\n",
@@ -535,8 +439,11 @@
     "         '--checkpoint', str(best)],\n",
     "        capture_output=False\n",
     "    )\n",
-    "    print('Evaluation exit code:', result.returncode)\n"
-   ]
-  }
- ]
-}
+    "    print('Evaluation exit code:', result.returncode)\n",
+]))
+
+print(f"Built {len(cells)} cells")
+nb = build(cells)
+with open(OUT, 'w', encoding='utf-8') as f:
+    json.dump(nb, f, indent=1, ensure_ascii=False)
+print(f"Written → {OUT}")
