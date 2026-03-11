@@ -551,12 +551,24 @@ def main():
         action='store_true',
         help='Disable mixed precision training (AMP)'
     )
+    parser.add_argument(
+        '--resume-checkpoint',
+        type=str,
+        default=None,
+        help='Path to checkpoint file to resume training from'
+    )
     
     args = parser.parse_args()
     
     # Load configuration
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
+    
+    # CLI --resume-checkpoint overrides anything in the YAML
+    if args.resume_checkpoint:
+        if 'training' not in config:
+            config['training'] = {}
+        config['training']['resume_checkpoint'] = args.resume_checkpoint
     
     # Enable cuDNN autotuning for optimized convolution algorithms
     # This finds the fastest algorithm for your specific hardware (one-time cost)
