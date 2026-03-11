@@ -4,14 +4,19 @@ Main training script for PromptGFM-Bio.
 Usage:
     python scripts/train.py --config configs/pretrain_config.yaml  # Pretraining
     python scripts/train.py --config configs/finetune_config.yaml  # Fine-tuning
+
+Dual-GPU (Kaggle T4 ×2):
+    torchrun --nproc_per_node=2 scripts/train.py --config configs/kaggle_config.yaml
 """
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 import yaml
 import torch
+import torch.distributed as dist
 from torch.utils.data import DataLoader
 
 # Add parent directory to path
@@ -28,6 +33,18 @@ from src.utils.logger import setup_logger
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Distributed training helpers ------------------------------------------------
+LOCAL_RANK = int(os.environ.get('LOCAL_RANK', -1))
+WORLD_SIZE = int(os.environ.get('WORLD_SIZE', 1))
+IS_DDP = LOCAL_RANK != -1
+
+def _get_rank() -> int:
+    return dist.get_rank() if (dist.is_available() and dist.is_initialized()) else 0
+
+def _is_main_process() -> bool:
+    return _get_rank() == 0
+# -----------------------------------------------------------------------------
 
 
 def create_collate_fn(edges_df, graph, gene_to_idx, input_dim=128, num_negatives=5):
@@ -255,11 +272,19 @@ def create_dataloaders(config):
     else:
         num_workers = min(4, max(0, cpu_count - 2)) if cpu_count and cpu_count > 2 else 0
         logger.info(f"  DataLoader workers: {num_workers} (parallel data loading enabled)")
-    
+
+    # In distributed training use DistributedSampler so each rank gets a unique data shard
+    from torch.utils.data.distributed import DistributedSampler
+    train_sampler = DistributedSampler(TensorDataset(torch.arange(len(train_edges))),
+                                       shuffle=True) if IS_DDP else None
+    val_sampler   = DistributedSampler(TensorDataset(torch.arange(len(val_edges))),
+                                       shuffle=False) if IS_DDP else None
+
     train_loader = DataLoader(
         TensorDataset(torch.arange(len(train_edges))),
         batch_size=config['training']['batch_size'],
-        shuffle=True,
+        shuffle=(train_sampler is None),  # DistributedSampler handles shuffling
+        sampler=train_sampler,
         num_workers=num_workers,
         collate_fn=train_collate_fn,
         pin_memory=True if torch.cuda.is_available() else False,  # Faster GPU transfer
@@ -270,6 +295,7 @@ def create_dataloaders(config):
         TensorDataset(torch.arange(len(val_edges))),
         batch_size=config['training']['batch_size'],
         shuffle=False,
+        sampler=val_sampler,
         num_workers=num_workers,
         collate_fn=val_collate_fn,
         pin_memory=True if torch.cuda.is_available() else False,
@@ -420,8 +446,43 @@ def run_finetuning(config):
     
     # Get device and checkpoint directory
     device = config.get('hardware', {}).get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+    if IS_DDP:
+        device = f'cuda:{LOCAL_RANK}'
     checkpoint_dir = config['training'].get('checkpoint_dir', 'checkpoints')
+
+    # --- Wrap model for DDP if running multi-GPU ---
+    if IS_DDP:
+        from torch.nn.parallel import DistributedDataParallel as DDP
+        model = model.to(device)
+        model = DDP(model, device_ids=[LOCAL_RANK], find_unused_parameters=False)
+        logger.info(f"  DDP enabled — rank {LOCAL_RANK}/{WORLD_SIZE}, device {device}")
     
+    # --- Pre-compute BioBERT embeddings for all unique disease texts ---
+    # BioBERT is frozen (freeze_encoder=true in config) so embeddings never change.
+    # Running BioBERT once upfront and caching by text string eliminates the most
+    # expensive forward pass from every training step.
+    inner_model = model.module if hasattr(model, 'module') else model
+    freeze_encoder = config.get('model', {}).get('prompt_encoder', {}).get('freeze_encoder', False)
+    if freeze_encoder and hasattr(inner_model, 'prompt_encoder'):
+        logger.info("\n  Pre-computing frozen BioBERT embeddings (runs once, then cached)...")
+        all_disease_texts = list(dataset.diseases)  # dataset.diseases = unique disease names
+
+        prompt_enc = inner_model.prompt_encoder
+        prompt_enc.eval()
+        emb_cache: dict = {}
+        encode_bs = 64  # encode in small chunks to avoid OOM during pre-computation
+        with torch.no_grad():
+            for i in range(0, len(all_disease_texts), encode_bs):
+                chunk = all_disease_texts[i:i + encode_bs]
+                embs = prompt_enc(chunk).cpu()  # store on CPU; moved to device in _forward_batch
+                for txt, emb in zip(chunk, embs):
+                    emb_cache[txt] = emb
+        logger.info(f"  ✅ Cached {len(emb_cache)} disease embeddings — BioBERT skipped per batch")
+    else:
+        emb_cache = None
+        if not freeze_encoder:
+            logger.info("  BioBERT not frozen — gradients needed, skipping pre-computation")
+
     # Create trainer
     trainer = PromptGFMTrainer(
         model=model,
@@ -436,6 +497,9 @@ def run_finetuning(config):
         use_wandb=config.get('logging', {}).get('use_wandb', False),
         use_amp=config['training'].get('use_amp', True)  # Enable mixed precision by default
     )
+
+    if emb_cache:
+        trainer.set_prompt_cache(emb_cache)
     
     # Check for resume checkpoint
     resume_checkpoint = config['training'].get('resume_checkpoint')
@@ -499,6 +563,12 @@ def main():
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
         logger.info("✓ cuDNN autotuning enabled (first epoch may be slightly slower)")
+
+    # --- DDP init (activated by torchrun --nproc_per_node=N) ---
+    if IS_DDP:
+        torch.cuda.set_device(LOCAL_RANK)
+        dist.init_process_group(backend='nccl')
+        logger.info(f"✓ DDP process group initialised — rank {LOCAL_RANK}/{WORLD_SIZE}")
     
     # Ensure hardware section exists
     if 'hardware' not in config:

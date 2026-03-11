@@ -13,6 +13,7 @@ Implements comprehensive training loop with:
 import logging
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from torch.cuda.amp import autocast, GradScaler
@@ -78,6 +79,10 @@ class PromptGFMTrainer:
         self.max_epochs = max_epochs
         self.patience = patience
         self.gradient_clip = gradient_clip
+
+        # Pre-computed prompt embedding cache {text -> tensor} (set via set_prompt_cache())
+        # Eliminates frozen BioBERT forward pass on every batch — huge speedup.
+        self.prompt_emb_cache: Optional[Dict[str, torch.Tensor]] = None
         self.use_wandb = use_wandb
         self.log_interval = log_interval
         
@@ -219,13 +224,25 @@ class PromptGFMTrainer:
         num_batches = 0
         
         pbar = tqdm(val_loader, desc="Validating")
-        
+
+        # Cache GNN node embeddings for the entire validation pass.
+        # The graph is static so every batch uses the same node_features / edge_index.
+        # Computing the GNN once (no_grad) instead of once-per-batch saves ~30% val time.
+        _val_node_embs: Optional[torch.Tensor] = None
+
         for batch in pbar:
             # Move batch to device
             batch = self._move_to_device(batch)
-            
-            # Forward pass
-            outputs = self._forward_batch(batch)
+
+            if _val_node_embs is None:
+                inner_model = self.model.module if hasattr(self.model, 'module') else self.model
+                with torch.no_grad():
+                    _val_node_embs = inner_model.gnn(
+                        batch['node_features'], batch['edge_index']
+                    ).detach()
+
+            # Forward pass (no GNN re-run, no BioBERT re-run)
+            outputs = self._forward_batch(batch, precomputed_node_embs=_val_node_embs)
             
             # Compute loss
             loss = self._compute_loss(outputs, batch)
@@ -383,15 +400,40 @@ class PromptGFMTrainer:
         else:
             logger.warning(f"No best model found at {best_model_path}. Using final model weights.")
     
-    def _forward_batch(self, batch: Dict) -> Dict:
-        """Forward pass for a batch."""
+    def set_prompt_cache(self, cache: Dict[str, torch.Tensor]):
+        """Set pre-computed prompt embeddings (call once before training)."""
+        self.prompt_emb_cache = cache
+        logger.info(f"  Prompt embedding cache: {len(cache)} unique disease texts — BioBERT will be skipped per batch")
+
+    def _forward_batch(
+        self,
+        batch: Dict,
+        precomputed_node_embs: Optional[torch.Tensor] = None,
+    ) -> Dict:
+        """Forward pass for a batch.
+
+        Args:
+            batch: batch dict with node_features, edge_index, disease_texts, gene_indices
+            precomputed_node_embs: optional cached GNN output [num_nodes, dim] (used in validate)
+        """
+        # Look up pre-computed prompt embeddings if cache is available
+        precomputed_prompt_embs: Optional[torch.Tensor] = None
+        if self.prompt_emb_cache is not None:
+            texts = batch['disease_texts']
+            precomputed_prompt_embs = torch.stack(
+                [self.prompt_emb_cache[t] for t in texts]
+            ).to(self.device)
+
+        # self.model handles both DDP-wrapped and plain PromptGFM
         scores = self.model(
             node_features=batch['node_features'],
             edge_index=batch['edge_index'],
             disease_texts=batch['disease_texts'],
-            gene_indices=batch['gene_indices']
+            gene_indices=batch['gene_indices'],
+            precomputed_prompt_embs=precomputed_prompt_embs,
+            precomputed_node_embs=precomputed_node_embs,
         )
-        
+
         return {'scores': scores}
     
     def _compute_loss(self, outputs: Dict, batch: Dict) -> torch.Tensor:
@@ -435,12 +477,19 @@ class PromptGFMTrainer:
         metrics: Optional[Dict] = None
     ):
         """Save model checkpoint with all training state."""
+        # In distributed training only rank-0 writes checkpoints
+        if dist.is_available() and dist.is_initialized() and dist.get_rank() != 0:
+            return
+
         checkpoint_path = self.checkpoint_dir / filename
-        
+
+        # Unwrap DDP model to get plain state dict
+        raw_model = self.model.module if hasattr(self.model, 'module') else self.model
+
         checkpoint = {
             'epoch': self.current_epoch + 1,  # Save as next epoch to resume from
             'global_step': self.global_step,
-            'model_state_dict': self.model.state_dict(),
+            'model_state_dict': raw_model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'best_val_metric': self.best_val_metric,
             'epochs_without_improvement': self.epochs_without_improvement,

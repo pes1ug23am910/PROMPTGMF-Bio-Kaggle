@@ -160,7 +160,9 @@ class PromptGFM(nn.Module):
         edge_index: torch.Tensor,
         disease_texts: Union[str, List[str]],
         gene_indices: torch.Tensor,
-        return_embeddings: bool = False
+        return_embeddings: bool = False,
+        precomputed_prompt_embs: Optional[torch.Tensor] = None,
+        precomputed_node_embs: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Forward pass for gene-disease association prediction.
@@ -171,16 +173,26 @@ class PromptGFM(nn.Module):
             disease_texts: Disease description(s) as prompt(s)
             gene_indices: [num_genes] indices of genes to predict for
             return_embeddings: Whether to return intermediate embeddings
+            precomputed_prompt_embs: Optional [batch, 768] pre-encoded disease embeddings
+                (skips BioBERT forward pass — use when prompt_encoder is frozen)
+            precomputed_node_embs: Optional [num_nodes, dim] pre-computed GNN node embeddings
+                (skips GNN forward pass — use during validation for speed)
             
         Returns:
             scores: [num_genes, 1] prediction scores
             embeddings (optional): [num_genes, output_dim] gene embeddings
         """
-        # 1. Encode disease prompt
-        prompt_embeddings = self.prompt_encoder(disease_texts)  # [batch_size, prompt_dim]
-        
-        # 2. GNN message passing to get node embeddings
-        node_embeddings = self.gnn(node_features, edge_index)  # [num_nodes, gnn_output_dim]
+        # 1. Encode disease prompt (skip if precomputed — frozen BioBERT)
+        if precomputed_prompt_embs is not None:
+            prompt_embeddings = precomputed_prompt_embs
+        else:
+            prompt_embeddings = self.prompt_encoder(disease_texts)  # [batch_size, prompt_dim]
+
+        # 2. GNN message passing to get node embeddings (skip if precomputed — validation cache)
+        if precomputed_node_embs is not None:
+            node_embeddings = precomputed_node_embs
+        else:
+            node_embeddings = self.gnn(node_features, edge_index)  # [num_nodes, gnn_output_dim]
         
         # 3. Extract gene embeddings FIRST (before conditioning)
         gene_embeddings = node_embeddings[gene_indices]  # [batch_size, gnn_output_dim]
