@@ -48,8 +48,9 @@ class PromptEncoder(nn.Module):
         self.freeze = freeze
         
         # Load tokenizer and model
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
+        # resume_download=True retries partial downloads instead of hanging mid-stream
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, resume_download=True)
+        self.model = AutoModel.from_pretrained(model_name, resume_download=True)
         
         # Get hidden size from model config
         self.hidden_size = self.model.config.hidden_size
