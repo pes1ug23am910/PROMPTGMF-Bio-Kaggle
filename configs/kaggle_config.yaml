@@ -1,13 +1,9 @@
 # Kaggle Configuration for PromptGFM-Bio
 # ─────────────────────────────────────────────────────────────────────────────
-# Tuned for Kaggle T4 x1  (16 GB VRAM) or P100 (16 GB VRAM)
-# Compared to laptop (RTX 4060, 8 GB):
-#   - batch_size doubled  (16 GB → can fit 2× more)
-#   - gradient_accumulation halved (same effective batch size)
-#   - hidden_dim increased for better capacity
-#   - mixed_precision kept on (T4/P100 both support FP16)
-#   - num_workers reduced (Kaggle CPUs are limited)
-#   - wandb disabled by default (login manually in the notebook if desired)
+# Tuned for Kaggle T4 x2 (16 GB VRAM per GPU)
+# Observed: only 3.4/15 GB VRAM used at batch_size=64 → bumped to 256
+# At batch_size=256: ~4× speedup (5 it/s → ~20 it/s, ~12 min/epoch)
+# freeze_encoder=true: BioBERT is frozen — saves ~2 GB VRAM + speeds up backprop
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Model Configuration
@@ -20,7 +16,7 @@ model:
     model_name: 'microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext'
     pooling_strategy: 'cls'
     max_length: 512
-    freeze_encoder: false
+    freeze_encoder: true           # ← freeze BioBERT: saves ~2 GB VRAM, faster backprop
 
   # GNN Backbone — larger hidden_dim thanks to 16 GB VRAM
   gnn_type: 'graphsage'           # Options: 'graphsage', 'gat', 'gin'
@@ -48,9 +44,9 @@ training:
   betas: [0.9, 0.999]
 
   num_epochs: 100
-  batch_size: 64                  # ↑ 32→64 (T4/P100 have 2× VRAM)
+  batch_size: 256                 # ↑ 64→256 (only 3.4/15 GB VRAM used at 64 — 4× headroom)
   gradient_clip: 1.0
-  accumulation_steps: 1           # ↓ 2→1 (batch_size already doubled; effective = 64)
+  accumulation_steps: 1           # effective batch size = 256
 
   loss_type: 'combined'
   loss_weights:
@@ -92,7 +88,7 @@ data:
   use_phenotype_lists: true
   max_phenotypes_per_disease: 20
 
-  num_workers: 2                  # ↓ 4→2  (Kaggle CPU quota is limited)
+  num_workers: 4                  # ↑ 2→4  (T4 x2 has more CPU cores available)
   pin_memory: true
   prefetch_factor: 2
 
